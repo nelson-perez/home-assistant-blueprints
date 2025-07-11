@@ -1,0 +1,324 @@
+blueprint:
+  name: Smart Knob Light Control
+  description: Controls the light with the knob changing the brigthness and temperature
+  domain: automation
+  # source_url: https://github.com/home-assistant/core/blob/dev/homeassistant/components/automation/blueprints/motion_light.yaml
+  input:
+    smart_knob_device:
+      name: Smart Knob
+      selector:
+          device:
+            filter:
+              model: Smart knob
+            #     # integration: mqtt
+            # # filter:
+            # #   - model: Smart knob
+            # multiple: false
+    target_light:
+      name: Light
+      selector:
+        # target:
+          entity:
+            domain: light
+    rotation_multiplier:
+      name: Rotary Step Multiplier
+      description: |-
+        Steps size percent to use for the automation.
+        The higher the number the faster it will change the light.
+        The smaller the number the slower will change the light.
+      selector:
+        number:
+          min: 1
+          max: 200
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+      default: 100
+mode: restart
+max_exceeded: silent
+
+# trigger:
+#   platform: state
+#   entity_id: motion_entity
+#   from: "off"
+#   to: "on"
+
+# action:
+#   - alias: "Turn on the light"
+#     service: light.turn_on
+#     target: target_light
+#   - alias: "Wait until there is no motion from device"
+#     wait_for_trigger:
+#       platform: state
+#       entity_id: motion_entity
+#       from: "on"
+#       to: "off"
+#   - alias: "Wait the number of seconds that has been set"
+#     delay: no_motion_wait
+#   - alias: "Turn off the light"
+#     service: light.turn_off
+#     target: target_light
+    
+    
+triggers:
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: single
+    trigger: device
+    id: Single Click
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: brightness_step_up
+    trigger: device
+    id: Brightness up
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: brightness_step_down
+    trigger: device
+    id: Brightness down
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: rotate_right
+    trigger: device
+    id: Rotate right
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: rotate_left
+    trigger: device
+    id: Rotate left
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: toggle
+    trigger: device
+    id: Toggle
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: color_temperature_step_up
+    trigger: device
+    id: Color Temperature Up
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: color_temperature_step_down
+    trigger: device
+    id: Color Temperature Down
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: hold
+    trigger: device
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: double
+    trigger: device
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: hue_move
+    trigger: device
+    id: Hue Move
+  - domain: mqtt
+    device_id: !input smart_knob_device
+    type: action
+    subtype: hue_stop
+    trigger: device
+variables:
+  smart_knob_device: !input smart_knob_device
+  target_light: !input target_light
+  step_multiplier_raw: !input rotation_multiplier
+  step_multiplier: step_multiplier_raw #"{{ (step_multiplier_raw if step_multiplier_raw > 0 else -1/(step_multiplier_raw - .01)}}"
+  action_step_size_raw: |-
+    {{ states((device_entities(smart_knob_device) | select('match', '.*action_step_size') | list)[0]) }}
+  action_step_size: |-
+    {{ (0 if action_step_size_raw == 'unknown' else (action_step_size_raw | int))*step_multiplier/100 }}
+  target_light_brightness: |
+    {{ max((state_attr(target_light, 'brightness') or 3) | int, 3) }}
+  target_light_color_temp_kelvin: | 
+    {{ (state_attr(target_light, 'color_temp_kelvin') or 2700) | int }}
+conditions: []
+actions:
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 50
+    enabled: false
+  - choose:
+      - conditions:
+          - condition: trigger
+            id:
+              - Toggle
+        sequence:
+          - if:
+              - condition: state
+                entity_id: !input target_light
+                state: "on"
+            then:
+              - if:
+                  - condition: template
+                    value_template: |-
+                      {{
+                        ((now() - states_attr(target_light, 'last_reported')) < 
+                        timedelta(milliseconds=500))
+                      }}
+                then:
+                  - wait_for_trigger:
+                      - trigger: state
+                        entity_id: !input target_light
+                        for:
+                          hours: 0
+                          minutes: 0
+                          seconds: 0.25
+                    timeout:
+                      hours: 0
+                      minutes: 0
+                      seconds: 0
+                      milliseconds: 250
+                    enabled: true
+                    continue_on_timeout: false
+                enabled: false
+              - action: light.turn_off
+                metadata: {}
+                data: {}
+                target:
+                  entity_id: !input target_light
+            else:
+              - action: light.turn_on
+                metadata: {}
+                data: {}
+                target:
+                  entity_id:  !input target_light
+      - conditions:
+          - condition: trigger
+            id:
+              - Hue Move
+        sequence:
+          - action: light.turn_on
+            metadata: {}
+            data:
+              brightness_pct: 1
+            target:
+              entity_id: !input target_light
+          - action: light.turn_off
+            target:
+              entity_id: !input target_light
+          - action: light.turn_on
+            target:
+              entity_id: !input target_light 
+      - conditions:
+          - condition: state
+            entity_id: !input target_light
+            state: "on"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: trigger
+                    id:
+                      - Brightness up
+                      - Rotate right
+                sequence:
+                  - variables:
+                      up_step: |-
+                        {{
+                          (action_step_size or 25)
+                        }}
+                      final_up: |-
+                        {{
+                         min(target_light_brightness  + action_step_size, 255)
+                        }}
+                      loops: |-
+                        {{
+                           min(action_step_size, 255) / 25
+                        }}
+                  - data:
+                      brightness: "{{ final_up }}"
+                    target:
+                      entity_id: !input target_light
+                    enabled: true
+                    action: light.turn_on
+                  - action: light.turn_on
+                    metadata: {}
+                    data:
+                      brightness_step: "{{ up_step }}"
+                    target:
+                      entity_id: !input target_light
+                    enabled: false
+              - conditions:
+                  - condition: trigger
+                    id:
+                      - Brightness down
+                      - Rotate left
+                sequence:
+                  - variables:
+                      down_step: |-
+                        {{
+                          (0 - action_step_size) or -25
+                        }}
+                      final_down: |-
+                        {{
+                          max(target_light_brightness | int  - (action_step_size or 25), 3)
+                        }}
+                      loops: |-
+                        {{
+                           min(action_step_size | int, 255) / 25
+                        }}
+                  - data:
+                      brightness: |-
+                        {{
+                          final_down
+                        }}
+                    target:
+                      entity_id: !input target_light
+                    enabled: true
+                    action: light.turn_on
+                  - action: light.turn_on
+                    metadata: {}
+                    data:
+                      brightness_step: "{{ down_step }}"
+                    target:
+                      entity_id: !input target_light
+                    enabled: false
+              - conditions:
+                  - condition: trigger
+                    id:
+                      - Color Temperature Up
+                sequence:
+                  - action: light.turn_on
+                    metadata: {}
+                    data:
+                      color_temp_kelvin: |-
+                        {{
+                          min(target_light_color_temp_kelvin | int  + action_step_size*10, 6535)
+                        }}
+                    target:
+                      entity_id: |-
+                        {{ target_light }}
+              - conditions:
+                  - condition: trigger
+                    id:
+                      - Color Temperature Down
+                sequence:
+                  - action: light.turn_on
+                    metadata: {}
+                    data:
+                      color_temp_kelvin: |-
+                        {{
+                          max(target_light_color_temp_kelvin  - action_step_size*10, 2702)
+                        }}
+                    target:
+                      entity_id: !input target_light
+            enabled: true
+  #- delay:
+  #    hours: 0
+  #    minutes: 0
+  #    seconds: 0
+  #    milliseconds: 250
+    
